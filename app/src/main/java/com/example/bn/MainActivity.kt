@@ -6,12 +6,16 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,22 +25,28 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -46,17 +56,21 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.io.File
@@ -67,18 +81,27 @@ import java.util.Locale
 // ---------------------------------------------------------------------------
 // Fixed developer credit. This is hard-coded and has no edit/delete option.
 // ---------------------------------------------------------------------------
-private const val DEV_NAME = "Developed by Burhan Nexus"
+private const val DEV_NAME = "Burhan Nexus"
 private const val DEV_PHONE = "03475093446"
+
+// Fixed help / support details (shown in the Help dialog).
+private const val HELP_NAME = "Burhan Nexus"
+private const val HELP_ADDRESS = "Sahara Center, opposite 2D stand, Jowar Chowk Buner"
+private const val HELP_PHONE = "03475093446"
 
 // Digit 0..9 -> letter (index = digit). Default code.
 private const val DEFAULT_MAP = "AEIOUSBLWP"
-private const val MAX_CODE_LENGTH = 20
+private const val MAX_INPUT_LENGTH = 20
 
+private val DeepBlue = Color(0xFF0B2E5C)
 private val Blue = Color(0xFF144B82)
 private val ButtonBlue = Color(0xFF1964AF)
 private val Green = Color(0xFF146E41)
+private val Red = Color(0xFFD32F2F)
 private val ErrorRed = Color(0xFFC0392B)
-private val Background = Color(0xFFF5F7FA)
+private val Gold = Color(0xFFFFC107)
+private val PageTop = Color(0xFFF5F7FA)
+private val PageBottom = Color(0xFFE3EBF6)
 
 private fun validMapping(s: String?): String {
     if (s == null) return DEFAULT_MAP
@@ -88,7 +111,7 @@ private fun validMapping(s: String?): String {
     return s
 }
 
-/** Returns Pair(price, errorMessage). One of them is always empty. */
+/** Secret code (letters) -> price. Returns Pair(price, errorMessage). */
 private fun decodePrice(raw: String, mapping: String): Pair<String, String> {
     val code = raw.trim().uppercase(Locale.ROOT)
     if (code.isEmpty()) return "" to "Please enter your secret code."
@@ -97,10 +120,23 @@ private fun decodePrice(raw: String, mapping: String): Pair<String, String> {
     for (letter in code) {
         val index = mapping.indexOf(letter)
         if (index < 0) return "" to "Invalid code character: $letter"
-        digits.append(('0' + index))
+        digits.append('0' + index)
     }
     val number = BigInteger(digits.toString())
     return String.format(Locale.US, "%,d", number) to ""
+}
+
+/** Price (numbers) -> secret code (letters). Returns Pair(code, errorMessage). */
+private fun generateCode(raw: String, mapping: String): Pair<String, String> {
+    val digits = raw.trim()
+    if (digits.isEmpty()) return "" to "Please enter the purchase price."
+
+    val sb = StringBuilder()
+    for (ch in digits) {
+        if (ch !in '0'..'9') return "" to "Only numbers (0-9) are allowed."
+        sb.append(mapping[ch - '0'])
+    }
+    return sb.toString() to ""
 }
 
 private fun decodeLogo(context: Context, uri: Uri): Bitmap? {
@@ -184,14 +220,25 @@ class AppState(context: Context) {
     }
 }
 
-private enum class Screen { Setup, Main, Settings, EditShop, EditCode }
+private enum class Screen { Setup, Main, EditShop, EditCode }
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+        )
         val state = AppState(applicationContext)
         setContent {
-            MaterialTheme {
+            MaterialTheme(
+                colorScheme = lightColorScheme(
+                    primary = ButtonBlue,
+                    onPrimary = Color.White,
+                    surface = Color.White,
+                    onSurface = Color(0xFF1B1B1B)
+                )
+            ) {
                 BNApp(state)
             }
         }
@@ -203,60 +250,242 @@ fun BNApp(state: AppState) {
     var screen by remember {
         mutableStateOf(if (state.setupDone) Screen.Main else Screen.Setup)
     }
+    var showOffers by remember { mutableStateOf(false) }
+    var showHelp by remember { mutableStateOf(false) }
 
-    BackHandler(enabled = screen != Screen.Main && screen != Screen.Setup) {
-        screen = when (screen) {
-            Screen.EditShop, Screen.EditCode -> Screen.Settings
-            else -> Screen.Main
-        }
+    BackHandler(enabled = screen == Screen.EditShop || screen == Screen.EditCode) {
+        screen = Screen.Main
     }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Background)
-            .systemBarsPadding()
+            .background(Brush.verticalGradient(listOf(PageTop, PageBottom)))
             .imePadding()
     ) {
+        when (screen) {
+            Screen.Main -> MainToolbar(
+                shopName = state.shopName,
+                onChangeInfo = { screen = Screen.EditShop },
+                onEditCode = { screen = Screen.EditCode },
+                onOffers = { showOffers = true },
+                onHelp = { showHelp = true }
+            )
+
+            Screen.Setup -> SimpleBar("Welcome! Set up your shop", null)
+            Screen.EditShop -> SimpleBar("Change information") { screen = Screen.Main }
+            Screen.EditCode -> SimpleBar("Edit secret code") { screen = Screen.Main }
+        }
+
         Box(modifier = Modifier.weight(1f)) {
             when (screen) {
                 Screen.Setup -> ShopForm(
-                    title = "Welcome! Set up your shop",
-                    subtitle = "This is asked only once. You can change it later from Settings.",
+                    subtitle = "This is asked only once. You can change it later from the menu.",
                     state = state,
                     saveLabel = "SAVE & START",
-                    onBack = null,
                     onSaved = { screen = Screen.Main }
                 )
 
-                Screen.Main -> MainScreen(state, onSettings = { screen = Screen.Settings })
-
-                Screen.Settings -> SettingsScreen(
-                    onEditShop = { screen = Screen.EditShop },
-                    onEditCode = { screen = Screen.EditCode },
-                    onBack = { screen = Screen.Main }
-                )
+                Screen.Main -> MainScreen(state)
 
                 Screen.EditShop -> ShopForm(
-                    title = "Shop details",
                     subtitle = "",
                     state = state,
                     saveLabel = "SAVE",
-                    onBack = { screen = Screen.Settings },
-                    onSaved = { screen = Screen.Settings }
+                    onSaved = { screen = Screen.Main }
                 )
 
                 Screen.EditCode -> CodeEditorScreen(
                     current = state.mapping,
                     onSave = {
                         state.saveMapping(it)
-                        screen = Screen.Settings
-                    },
-                    onBack = { screen = Screen.Settings }
+                        screen = Screen.Main
+                    }
                 )
             }
         }
+
         DeveloperFooter()
+    }
+
+    if (showOffers) {
+        AlertDialog(
+            onDismissRequest = { showOffers = false },
+            confirmButton = {
+                TextButton(onClick = { showOffers = false }) { Text("OK") }
+            },
+            title = { Text("Offers", fontWeight = FontWeight.Bold) },
+            text = { Text("Coming soon", fontSize = 18.sp) }
+        )
+    }
+
+    if (showHelp) {
+        AlertDialog(
+            onDismissRequest = { showHelp = false },
+            confirmButton = {
+                TextButton(onClick = { showHelp = false }) { Text("OK") }
+            },
+            title = { Text("Help", fontWeight = FontWeight.Bold) },
+            text = {
+                Column {
+                    Text(HELP_NAME, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Blue)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("📍  $HELP_ADDRESS", fontSize = 15.sp)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("📞  $HELP_PHONE", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Top bars
+// ---------------------------------------------------------------------------
+@Composable
+fun GradientBar(content: @Composable () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Brush.horizontalGradient(listOf(DeepBlue, Blue)))
+            .statusBarsPadding()
+    ) {
+        content()
+    }
+}
+
+@Composable
+fun ToolbarButton(label: String, onClick: () -> Unit, icon: @Composable () -> Unit) {
+    Column(
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(modifier = Modifier.size(28.dp), contentAlignment = Alignment.Center) {
+            icon()
+        }
+        Text(text = label, color = Color.White, fontSize = 11.sp)
+    }
+}
+
+@Composable
+fun MainToolbar(
+    shopName: String,
+    onChangeInfo: () -> Unit,
+    onEditCode: () -> Unit,
+    onOffers: () -> Unit,
+    onHelp: () -> Unit
+) {
+    var menuOpen by remember { mutableStateOf(false) }
+
+    GradientBar {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(64.dp)
+                .padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Settings: three small lines, opens a menu.
+            Box {
+                ToolbarButton(label = "Settings", onClick = { menuOpen = true }) {
+                    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        repeat(3) {
+                            Box(
+                                modifier = Modifier
+                                    .size(width = 22.dp, height = 3.dp)
+                                    .background(Color.White, RoundedCornerShape(2.dp))
+                            )
+                        }
+                    }
+                }
+                DropdownMenu(
+                    expanded = menuOpen,
+                    onDismissRequest = { menuOpen = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Change information") },
+                        onClick = {
+                            menuOpen = false
+                            onChangeInfo()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Edit secret code") },
+                        onClick = {
+                            menuOpen = false
+                            onEditCode()
+                        }
+                    )
+                }
+            }
+
+            Text(
+                text = shopName,
+                color = Color.White,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 4.dp)
+            )
+
+            ToolbarButton(label = "Offers", onClick = onOffers) {
+                Text("🎁", fontSize = 22.sp)
+            }
+
+            ToolbarButton(label = "Help", onClick = onHelp) {
+                Box(
+                    modifier = Modifier
+                        .size(24.dp)
+                        .border(2.dp, Color.White, CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("?", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SimpleBar(title: String, onBack: (() -> Unit)?) {
+    GradientBar {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp)
+                .padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (onBack != null) {
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .clickable(onClick = onBack),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("←", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                }
+            } else {
+                Spacer(modifier = Modifier.width(8.dp))
+            }
+            Text(
+                text = title,
+                color = Color.White,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 8.dp)
+            )
+        }
     }
 }
 
@@ -265,240 +494,326 @@ fun BNApp(state: AppState) {
 // ---------------------------------------------------------------------------
 @Composable
 fun DeveloperFooter() {
-    Column(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color(0xFFE3E9F0))
-            .padding(vertical = 8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+            .background(Brush.horizontalGradient(listOf(DeepBlue, Blue)))
+            .navigationBarsPadding()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
     ) {
+        Column {
+            Text(
+                text = "Developed by",
+                color = Color.White,
+                fontSize = 11.sp,
+                fontStyle = FontStyle.Italic
+            )
+            Text(
+                text = DEV_NAME,
+                color = Gold,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                fontStyle = FontStyle.Italic
+            )
+        }
         Text(
-            text = DEV_NAME,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Bold,
-            color = Blue
-        )
-        Text(
-            text = "Mobile: $DEV_PHONE",
-            fontSize = 13.sp,
-            color = Color.Black
+            text = "📞  $DEV_PHONE",
+            color = Color.White,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Bold
         )
     }
 }
 
 // ---------------------------------------------------------------------------
-// Main screen
+// Main screen: decode (code -> price) and generate (price -> code)
 // ---------------------------------------------------------------------------
 @Composable
-fun MainScreen(state: AppState, onSettings: () -> Unit) {
-    var code by remember { mutableStateOf("") }
-    var price by remember { mutableStateOf("") }
+fun Segment(text: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (selected) ButtonBlue else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = text,
+            color = if (selected) Color.White else Blue,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
+
+@Composable
+fun MainScreen(state: AppState) {
+    var mode by remember { mutableStateOf(0) } // 0 = decode, 1 = generate
+    var input by remember { mutableStateOf("") }
+    var result by remember { mutableStateOf("") }
     var error by remember { mutableStateOf("") }
 
-    fun decode() {
-        val (p, e) = decodePrice(code, state.mapping)
-        price = p
-        error = e
+    fun process() {
+        val pair = if (mode == 0) {
+            decodePrice(input, state.mapping)
+        } else {
+            generateCode(input, state.mapping)
+        }
+        result = pair.first
+        error = pair.second
     }
 
     fun clearAll() {
-        code = ""
-        price = ""
+        input = ""
+        result = ""
         error = ""
     }
 
+    fun switchMode(newMode: Int) {
+        mode = newMode
+        clearAll()
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 24.dp, vertical = 12.dp)
+            .padding(horizontal = 16.dp, vertical = 16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
         // Shop header
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.Top
-        ) {
-            val logo = state.logo
-            if (logo != null) {
-                Image(
-                    bitmap = logo.asImageBitmap(),
-                    contentDescription = "Shop logo",
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .size(64.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                )
-                Spacer(modifier = Modifier.width(12.dp))
-            }
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = state.shopName,
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Blue
-                )
+        val logo = state.logo
+        if (logo != null) {
+            Image(
+                bitmap = logo.asImageBitmap(),
+                contentDescription = "Shop logo",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(88.dp)
+                    .clip(RoundedCornerShape(18.dp))
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+        }
+
+        Text(
+            text = state.shopName,
+            fontSize = 28.sp,
+            fontWeight = FontWeight.ExtraBold,
+            color = Blue,
+            textAlign = TextAlign.Center
+        )
+
+        if (state.address.isNotEmpty() || state.phone.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .shadow(4.dp, RoundedCornerShape(14.dp))
+                    .background(Color.White, RoundedCornerShape(14.dp))
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 if (state.address.isNotEmpty()) {
-                    Text(text = state.address, fontSize = 14.sp, color = Color.DarkGray)
+                    Text("📍", fontSize = 18.sp)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = state.address,
+                        fontSize = 13.sp,
+                        color = Color(0xFF333333),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                if (state.address.isNotEmpty() && state.phone.isNotEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .padding(horizontal = 10.dp)
+                            .size(width = 1.dp, height = 28.dp)
+                            .background(Color(0xFFCCD5E0))
+                    )
                 }
                 if (state.phone.isNotEmpty()) {
-                    Text(text = state.phone, fontSize = 14.sp, color = Color.DarkGray)
+                    Text("📞", fontSize = 16.sp)
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = state.phone,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF222222)
+                    )
                 }
             }
-            TextButton(onClick = onSettings) {
-                Text("Settings", fontSize = 14.sp)
-            }
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(20.dp))
 
-        Text(
-            text = "PRICE DECODER",
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Bold,
-            color = Color.Black,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Text(
-            text = "Enter your secret code:",
-            fontSize = 16.sp,
-            color = Color.Black
-        )
-        Spacer(modifier = Modifier.height(6.dp))
-
-        OutlinedTextField(
-            value = code,
-            onValueChange = { new ->
-                code = new.uppercase(Locale.ROOT).take(MAX_CODE_LENGTH)
-                error = ""
-            },
-            singleLine = true,
-            textStyle = TextStyle(
-                fontFamily = FontFamily.Monospace,
-                fontSize = 24.sp,
-                color = Color.Black
-            ),
-            keyboardOptions = KeyboardOptions(
-                capitalization = KeyboardCapitalization.Characters,
-                imeAction = ImeAction.Done
-            ),
-            keyboardActions = KeyboardActions(onDone = { decode() }),
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Text(
-            text = "PURCHASE PRICE (Rs.)",
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Bold,
-            color = Color.Black
-        )
-        Spacer(modifier = Modifier.height(6.dp))
-
-        Box(
+        // Main card
+        val cardShape = RoundedCornerShape(18.dp)
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(Color.White, RoundedCornerShape(4.dp))
-                .padding(horizontal = 12.dp, vertical = 14.dp),
-            contentAlignment = Alignment.CenterEnd
+                .shadow(8.dp, cardShape)
+                .background(Color.White, cardShape)
+                .border(1.5.dp, ButtonBlue, cardShape)
+                .padding(16.dp)
         ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Row(
+                    modifier = Modifier
+                        .background(DeepBlue, RoundedCornerShape(50))
+                        .padding(horizontal = 20.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("🔒", fontSize = 16.sp)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = if (mode == 0) "PRICE DECODER" else "CODE GENERATOR",
+                        color = Color.White,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Mode switch
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFFE6EDF7), RoundedCornerShape(10.dp))
+                    .padding(4.dp)
+            ) {
+                Segment(
+                    text = "Code → Price",
+                    selected = mode == 0,
+                    modifier = Modifier.weight(1f)
+                ) { switchMode(0) }
+                Segment(
+                    text = "Price → Code",
+                    selected = mode == 1,
+                    modifier = Modifier.weight(1f)
+                ) { switchMode(1) }
+            }
+
+            Spacer(modifier = Modifier.height(18.dp))
+
             Text(
-                text = if (price.isEmpty()) " " else price,
-                fontSize = 30.sp,
+                text = if (mode == 0) "Enter your secret code:" else "Enter purchase price (numbers):",
+                fontSize = 16.sp,
                 fontWeight = FontWeight.Bold,
-                color = Green,
-                textAlign = TextAlign.End
+                color = Color(0xFF1B1B1B)
             )
-        }
+            Spacer(modifier = Modifier.height(8.dp))
 
-        Spacer(modifier = Modifier.height(10.dp))
-
-        Text(
-            text = if (error.isEmpty()) " " else error,
-            fontSize = 14.sp,
-            color = ErrorRed
-        )
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Button(
-                onClick = { decode() },
-                shape = RoundedCornerShape(4.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = ButtonBlue,
-                    contentColor = Color.White
+            OutlinedTextField(
+                value = input,
+                onValueChange = { new ->
+                    input = if (mode == 0) {
+                        new.uppercase(Locale.ROOT).take(MAX_INPUT_LENGTH)
+                    } else {
+                        new.filter { it in '0'..'9' }.take(MAX_INPUT_LENGTH)
+                    }
+                    error = ""
+                },
+                singleLine = true,
+                textStyle = TextStyle(
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 24.sp,
+                    color = Color.Black
                 ),
+                keyboardOptions = KeyboardOptions(
+                    capitalization = if (mode == 0) KeyboardCapitalization.Characters else KeyboardCapitalization.None,
+                    keyboardType = if (mode == 0) KeyboardType.Text else KeyboardType.Number,
+                    imeAction = ImeAction.Done
+                ),
+                keyboardActions = KeyboardActions(onDone = { process() }),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Spacer(modifier = Modifier.height(18.dp))
+
+            Text(
+                text = if (mode == 0) "Purchase Price (Rs.)" else "Secret code",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF1B1B1B)
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Box(
                 modifier = Modifier
-                    .weight(1f)
-                    .height(52.dp)
+                    .fillMaxWidth()
+                    .background(Color(0xFFF1F5FA), RoundedCornerShape(12.dp))
+                    .border(1.dp, Color(0xFFD5DEEA), RoundedCornerShape(12.dp))
+                    .padding(horizontal = 14.dp, vertical = 14.dp),
+                contentAlignment = Alignment.CenterEnd
             ) {
-                Text("DECODE", fontSize = 16.sp)
+                Text(
+                    text = if (result.isEmpty()) " " else result,
+                    fontSize = 30.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = if (mode == 0) FontFamily.Default else FontFamily.Monospace,
+                    color = if (mode == 0) Green else Blue,
+                    textAlign = TextAlign.End
+                )
             }
 
-            Button(
-                onClick = { clearAll() },
-                shape = RoundedCornerShape(4.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFFE1E6EC),
-                    contentColor = Color.Black
-                ),
-                modifier = Modifier
-                    .weight(1f)
-                    .height(52.dp)
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = if (error.isEmpty()) " " else error,
+                fontSize = 14.sp,
+                color = ErrorRed
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text("CLEAR / NEW", fontSize = 16.sp)
+                Button(
+                    onClick = { process() },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = ButtonBlue,
+                        contentColor = Color.White
+                    ),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(54.dp)
+                ) {
+                    Text(
+                        text = if (mode == 0) "DECODE" else "GENERATE",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                Button(
+                    onClick = { clearAll() },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFE1E6EC),
+                        contentColor = Color.Black
+                    ),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(54.dp)
+                ) {
+                    Text(text = "CLEAR / NEW", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                }
             }
         }
-    }
-}
 
-// ---------------------------------------------------------------------------
-// Settings menu
-// ---------------------------------------------------------------------------
-@Composable
-fun SettingsScreen(onEditShop: () -> Unit, onEditCode: () -> Unit, onBack: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 24.dp, vertical = 12.dp)
-    ) {
-        TextButton(onClick = onBack) { Text("< Back") }
-
-        Text(
-            text = "Settings",
-            fontSize = 26.sp,
-            fontWeight = FontWeight.Bold,
-            color = Blue
-        )
-        Spacer(modifier = Modifier.height(24.dp))
-
-        Button(
-            onClick = onEditCode,
-            shape = RoundedCornerShape(4.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = ButtonBlue, contentColor = Color.White),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(56.dp)
-        ) { Text("Edit secret code (digits to letters)", fontSize = 16.sp) }
-
-        Spacer(modifier = Modifier.height(14.dp))
-
-        OutlinedButton(
-            onClick = onEditShop,
-            shape = RoundedCornerShape(4.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(56.dp)
-        ) { Text("Edit shop name, address, phone, logo", fontSize = 16.sp) }
+        Spacer(modifier = Modifier.height(16.dp))
     }
 }
 
@@ -507,11 +822,9 @@ fun SettingsScreen(onEditShop: () -> Unit, onEditCode: () -> Unit, onBack: () ->
 // ---------------------------------------------------------------------------
 @Composable
 fun ShopForm(
-    title: String,
     subtitle: String,
     state: AppState,
     saveLabel: String,
-    onBack: (() -> Unit)?,
     onSaved: () -> Unit
 ) {
     val context = LocalContext.current
@@ -540,24 +853,12 @@ fun ShopForm(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 24.dp, vertical = 12.dp)
+            .padding(horizontal = 24.dp, vertical = 16.dp)
     ) {
-        if (onBack != null) {
-            TextButton(onClick = onBack) { Text("< Back") }
-        }
-
-        Text(
-            text = title,
-            fontSize = 24.sp,
-            fontWeight = FontWeight.Bold,
-            color = Blue
-        )
         if (subtitle.isNotEmpty()) {
-            Spacer(modifier = Modifier.height(4.dp))
             Text(text = subtitle, fontSize = 14.sp, color = Color.DarkGray)
+            Spacer(modifier = Modifier.height(16.dp))
         }
-
-        Spacer(modifier = Modifier.height(20.dp))
 
         OutlinedTextField(
             value = name,
@@ -662,12 +963,12 @@ fun ShopForm(
                     onSaved()
                 }
             },
-            shape = RoundedCornerShape(4.dp),
+            shape = RoundedCornerShape(12.dp),
             colors = ButtonDefaults.buttonColors(containerColor = ButtonBlue, contentColor = Color.White),
             modifier = Modifier
                 .fillMaxWidth()
-                .height(52.dp)
-        ) { Text(saveLabel, fontSize = 16.sp) }
+                .height(54.dp)
+        ) { Text(saveLabel, fontSize = 16.sp, fontWeight = FontWeight.Bold) }
     }
 }
 
@@ -675,7 +976,7 @@ fun ShopForm(
 // Secret code editor: one letter per digit, a letter cannot be used twice.
 // ---------------------------------------------------------------------------
 @Composable
-fun CodeEditorScreen(current: String, onSave: (String) -> Unit, onBack: () -> Unit) {
+fun CodeEditorScreen(current: String, onSave: (String) -> Unit) {
     val letters = remember { mutableStateListOf<String>().apply { current.forEach { add(it.toString()) } } }
 
     val counts = letters.filter { it.isNotEmpty() }.groupingBy { it }.eachCount()
@@ -720,17 +1021,8 @@ fun CodeEditorScreen(current: String, onSave: (String) -> Unit, onBack: () -> Un
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 24.dp, vertical = 12.dp)
+            .padding(horizontal = 24.dp, vertical = 16.dp)
     ) {
-        TextButton(onClick = onBack) { Text("< Back") }
-
-        Text(
-            text = "Secret code",
-            fontSize = 24.sp,
-            fontWeight = FontWeight.Bold,
-            color = Blue
-        )
-        Spacer(modifier = Modifier.height(4.dp))
         Text(
             text = "Choose one letter for each digit. The same letter cannot be used for two digits.",
             fontSize = 14.sp,
@@ -770,12 +1062,12 @@ fun CodeEditorScreen(current: String, onSave: (String) -> Unit, onBack: () -> Un
         Button(
             onClick = { onSave(letters.joinToString("")) },
             enabled = canSave,
-            shape = RoundedCornerShape(4.dp),
+            shape = RoundedCornerShape(12.dp),
             colors = ButtonDefaults.buttonColors(containerColor = ButtonBlue, contentColor = Color.White),
             modifier = Modifier
                 .fillMaxWidth()
-                .height(52.dp)
-        ) { Text("SAVE CODE", fontSize = 16.sp) }
+                .height(54.dp)
+        ) { Text("SAVE CODE", fontSize = 16.sp, fontWeight = FontWeight.Bold) }
 
         Spacer(modifier = Modifier.height(10.dp))
 
@@ -783,7 +1075,7 @@ fun CodeEditorScreen(current: String, onSave: (String) -> Unit, onBack: () -> Un
             onClick = {
                 for (i in 0..9) letters[i] = DEFAULT_MAP[i].toString()
             },
-            shape = RoundedCornerShape(4.dp),
+            shape = RoundedCornerShape(12.dp),
             modifier = Modifier
                 .fillMaxWidth()
                 .height(48.dp)
